@@ -77,7 +77,7 @@ def main():
         if archive.testzip() is not None:
             raise RuntimeError("VPK CRC failure")
         fields = sfo_fields(archive.read("sce_sys/param.sfo"))
-        if fields.get("TITLE_ID") != "NXVM00001" or fields.get("APP_VER") != "01.00":
+        if fields.get("TITLE_ID") != "NXVM00001" or fields.get("APP_VER") != "01.01":
             raise RuntimeError("Unexpected VPK identity")
         if archive.getinfo("eboot.bin").file_size == 0:
             raise RuntimeError("Empty executable")

@@ -14,6 +14,7 @@ extern "C" { unsigned int _newlib_heap_size_user = 128 * 1024 * 1024; }
 
 namespace {
 using namespace vita_viewer;
+constexpr const char* statusFormat="map=%s fps=%.1f work=%.2fms tex=%u decoded=%u segments=%u; %s";
 struct Options {
 #ifdef NOX_VITA
     std::filesystem::path gameDir="ux0:data/nox";
@@ -68,6 +69,16 @@ void logOutput(void*,int,SDL_LogPriority,const char* message) {
     std::fprintf(stderr,"%s\n",message);
     if (logFile) { std::fprintf(logFile,"%s\n",message); std::fflush(logFile); }
 }
+void verifyStatusFormatting() {
+    // Run through SDL's actual target formatter before telemetry reaches the
+    // render loop. A host libc test alone cannot detect Vita newlib limitations.
+    char text[160];
+    SDL_snprintf(text,sizeof(text),statusFormat,
+        "TEST",60.0,1.25,2231808u,942928u,672341u,"TAIL");
+    if (std::string(text)!="map=TEST fps=60.0 work=1.25ms tex=2231808 decoded=942928 segments=672341; TAIL")
+        throw std::runtime_error("Runtime status formatting check failed");
+    SDL_Log("Status formatting check passed");
+}
 }
 
 int main(int argc,char** argv) {
@@ -84,7 +95,7 @@ int main(int argc,char** argv) {
         sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
 #endif
         SDL_SetLogOutputFunction(logOutput,nullptr);
-        SDL_SetAppMetadata("Nox Map Viewer","0.1.0","org.noxcore.vita.viewer");
+        SDL_SetAppMetadata("Nox Map Viewer","0.1.1","org.noxcore.vita.viewer");
         const bool headless=!options.screenshot.empty();
         check(SDL_Init(headless ? 0 : SDL_INIT_VIDEO));
         if (headless) {
@@ -102,7 +113,8 @@ int main(int argc,char** argv) {
         }
         if (!renderer) throw std::runtime_error(SDL_GetError());
         if (!headless) SDL_SetRenderVSync(renderer,1);
-        SDL_Log("Nox Map Viewer 0.1.0; renderer=%s; stock assets only",SDL_GetRendererName(renderer));
+        SDL_Log("Nox Map Viewer 0.1.1; renderer=%s; stock assets only",SDL_GetRendererName(renderer));
+        verifyStatusFormatting();
         beginFrame(renderer);
         text(renderer,24,235,"Nox Map Viewer - loading original game data...");
         text(renderer,24,260,"Expected: ux0:data/nox/thing.bin, video.bag, video.idx and maps/");
@@ -216,9 +228,9 @@ int main(int argc,char** argv) {
                 const auto now=SDL_GetTicksNS();
                 if (now-windowStart>=1000000000ull) {
                     fps=windowFrames*1e9/static_cast<double>(now-windowStart); windowFrames=0;windowStart=now;pools=memoryPools();
-                    if (!headless) SDL_Log("map=%s fps=%.1f work=%.2fms tex=%zu decoded=%zu segments=%zu; %s",
-                        viewer.mapName().c_str(),fps,workMs,viewer.stats.textureBytes,viewer.stats.decodedBytes,
-                        viewer.stats.segmentBytes,pools.c_str());
+                    if (!headless) SDL_Log(statusFormat,
+                        viewer.mapName().c_str(),fps,workMs,static_cast<unsigned>(viewer.stats.textureBytes),static_cast<unsigned>(viewer.stats.decodedBytes),
+                        static_cast<unsigned>(viewer.stats.segmentBytes),pools.c_str());
                 }
                 if (headless && frame>=static_cast<unsigned>(options.frames)) running=false;
             }
@@ -234,7 +246,7 @@ int main(int argc,char** argv) {
                     << ",\n  \"segment_bytes\": " << viewer.stats.segmentBytes << ",\n  \"desktop_work_mean_ms\": " << mean
                     << ",\n  \"desktop_work_p95_ms\": " << p95 << ",\n  \"hardware_verified\": false\n}\n";
                 if (!receipt) throw std::runtime_error("Could not write screenshot receipt");
-                SDL_Log("Headless verification passed; frames=%u; textures=%zu; mean=%.2fms p95=%.2fms (desktop)",frame,viewer.stats.textures,mean,p95);
+                SDL_Log("Headless verification passed; frames=%u; textures=%u; mean=%.2fms p95=%.2fms (desktop)",frame,static_cast<unsigned>(viewer.stats.textures),mean,p95);
             }
         }
     } catch(const std::exception& e) {

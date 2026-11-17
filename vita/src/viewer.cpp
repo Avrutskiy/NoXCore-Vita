@@ -103,7 +103,9 @@ void Viewer::load(const std::filesystem::path& path) {
     tiles_=std::move(nextTiles); walls_=std::move(nextWalls);
     initial_=nextInitial; camera=initial_;
     mapName_=path.stem().string();
-    SDL_Log("map=%s tiles=%zu walls=%zu",mapName_.c_str(),tiles_.size(),walls_.size());
+    // Vita newlib's formatter does not consume %zu arguments. Use supported
+    // conversions; otherwise a following %s can read a byte count as a pointer.
+    SDL_Log("map=%s tiles=%u walls=%u",mapName_.c_str(),static_cast<unsigned>(tiles_.size()),static_cast<unsigned>(walls_.size()));
 }
 void Viewer::resetCamera() { camera=initial_; }
 std::int32_t Viewer::index(const nox::things::ImageRef& ref) {

@@ -4,6 +4,13 @@ First milestone of NoXCore-Vita, based on original upstream commit
 `be29b2b1cca091349ab118ae8a354e9a04e983e1`. The engine and codecs come directly
 from `mordentral/NoXCore`; no Mac implementation is included.
 
+Version 0.1.1 (VPK 01.01) fixes a crash in the once-per-second status logger.
+Vita newlib did not consume `%zu` arguments, causing the following `%s` to treat
+the texture byte count as an address. Both initial hardware dumps resolve to
+`strlen` called from `_svfprintf_r` with that exact count. The viewer now uses
+supported unsigned formats, runs a formatting check on the target at startup,
+and retains line information in the host ELF for future crash diagnosis.
+
 This build renders the original map's floors, edge blends and walls, including
 window variants and initially open secret walls. It opens at the map's first
 PlayerStart marker when one exists. It is a geometry viewer: objects, actors,
@@ -98,7 +105,9 @@ these receipts are desktop CPU timings, not Vita performance.
 
 The initial build has rendered WAR01A, CON01A and WIZ01A with real game assets.
 Vita cross-compilation, ELF/SELF conversion and VPK generation have passed.
-Hardware launch, frame rate, controls and suspend/resume are **not yet verified**.
+The initial version loaded and displayed WAR01A on hardware, then crashed in its
+status logger. Version 0.1.1 still needs a hardware retest; sustained frame rate,
+controls and suspend/resume are **not yet verified**.
 
 ## Memory and measurements
 
