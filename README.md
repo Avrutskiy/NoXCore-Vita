@@ -1,3 +1,14 @@
+# NoXCore-Vita
+
+Native PS Vita port work based directly on [mordentral/NoXCore](https://github.com/mordentral/NoXCore),
+with its original history. This repository is independent of the Mac port.
+
+The first milestone is a **stock-asset map viewer** for 3.65 Ensō: original floor
+tiles, blended edges and walls, handheld pan/zoom and bounded caches. No HD pack
+is loaded. It is not yet a playable game. See [Vita build and install instructions](vita/README.md).
+
+The original upstream project description follows.
+
 # NoX Core
 
 **A modern client for Nox** (Westwood Studios, 2000): the game as you know it, cleaned up, with

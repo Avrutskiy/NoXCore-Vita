@@ -2,7 +2,9 @@
 // fills one ThingDb list per tag; THNG attributes stay as text except the binary ones.
 #include "noxcore/things/thing_db.hpp"
 
+#ifndef NOX_STOCK_ASSETS_ONLY
 #include "noxcore/content/content_pack.hpp"
+#endif
 #include "noxcore/crypto/noxcrypt.hpp"
 #include "noxcore/io/byte_reader.hpp"
 #include "noxcore/io/file.hpp"
@@ -496,7 +498,9 @@ ThingDb loadThingDb(const std::filesystem::path& path)
     auto data = readFileBytes(path);
     crypto::cipherForKey(crypto::FileKey::ThingBin).decrypt(data);
     ThingDb db = parseThingDb(data);
+#ifndef NOX_STOCK_ASSETS_ONLY
     content::applyContentPacksToThings(db); // (the installed content packs' changes to types, once, as it loads; none installed: nothing)
+#endif
     return db;
 }
 

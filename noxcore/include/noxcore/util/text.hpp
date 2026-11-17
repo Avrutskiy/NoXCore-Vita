@@ -59,7 +59,8 @@ struct NoCaseHash {
     using is_transparent = void;
     std::size_t operator()(std::string_view s) const noexcept
     {
-        std::size_t h = 14695981039346656037ull; // (FNV-1a over the lower-cased bytes)
+        // The same truncated hash on 32-bit targets, without an implicit-overflow warning.
+        std::size_t h = static_cast<std::size_t>(14695981039346656037ull); // (FNV-1a over the lower-cased bytes)
         for (const char c : s) {
             h = (h ^ lowerAscii(c)) * 1099511628211ull;
         }
