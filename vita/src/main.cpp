@@ -23,6 +23,7 @@ struct Options {
 #endif
     std::filesystem::path map="maps/WAR01A/WAR01A.MAP", screenshot;
     int frames=1;
+    float zoom=defaultZoom;
     bool tour=false;
 };
 Options arguments(int argc,char** argv) {
@@ -34,6 +35,11 @@ Options arguments(int argc,char** argv) {
         else if (s=="--map") o.map=value();
         else if (s=="--headless") o.screenshot=value();
         else if (s=="--frames") o.frames=std::clamp(std::stoi(value()),1,10000);
+        else if (s=="--zoom") {
+            o.zoom=std::stof(value());
+            if (std::abs(o.zoom-1.133f)<.00001f) o.zoom=defaultZoom;
+            if (!std::isfinite(o.zoom) || o.zoom<.5f || o.zoom>2.f) throw std::runtime_error("Zoom must be between 0.5 and 2");
+        }
         else if (s=="--tour") o.tour=true;
         else throw std::runtime_error("Unknown argument: "+s);
     }
@@ -95,7 +101,7 @@ int main(int argc,char** argv) {
         sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
 #endif
         SDL_SetLogOutputFunction(logOutput,nullptr);
-        SDL_SetAppMetadata("Nox Map Viewer","0.1.1","org.noxcore.vita.viewer");
+        SDL_SetAppMetadata("Nox Map Viewer","0.1.2","org.noxcore.vita.viewer");
         const bool headless=!options.screenshot.empty();
         check(SDL_Init(headless ? 0 : SDL_INIT_VIDEO));
         if (headless) {
@@ -113,7 +119,7 @@ int main(int argc,char** argv) {
         }
         if (!renderer) throw std::runtime_error(SDL_GetError());
         if (!headless) SDL_SetRenderVSync(renderer,1);
-        SDL_Log("Nox Map Viewer 0.1.1; renderer=%s; stock assets only",SDL_GetRendererName(renderer));
+        SDL_Log("Nox Map Viewer 0.1.2; renderer=%s; stock assets only",SDL_GetRendererName(renderer));
         verifyStatusFormatting();
         beginFrame(renderer);
         text(renderer,24,235,"Nox Map Viewer - loading original game data...");
@@ -125,6 +131,7 @@ int main(int argc,char** argv) {
             std::size_t mapIndex=0;
             for (std::size_t i=0;i<viewer.maps().size();++i)
                 if (viewer.maps()[i].stem()==options.map.stem()) mapIndex=i;
+            viewer.camera.zoom=options.zoom;
             const auto initial=viewer.camera;
             auto switchMap=[&](int direction) {
                 if (viewer.maps().empty()) return;
@@ -132,7 +139,7 @@ int main(int argc,char** argv) {
                 beginFrame(renderer); text(renderer,24,250,"Loading "+viewer.maps()[next].stem().string()+"..."); SDL_RenderPresent(renderer);
                 viewer.load(viewer.maps()[next]); mapIndex=next;
             };
-            auto zoom=[&](int direction) {viewer.camera.zoom=std::clamp(viewer.camera.zoom*(direction>0 ? 2.f : .5f),.5f,2.f);};
+            auto zoom=[&](int direction) {viewer.stepZoom(direction);};
             bool running=true,paused=false;
             unsigned frame=0;
             std::uint32_t previousButtons=0;
@@ -210,9 +217,9 @@ int main(int argc,char** argv) {
                 panel(renderer,0,72);
                 text(renderer,12,10,"NOX / VITA MAP VIEWER     "+viewer.mapName()+"     ORIGINAL ASSETS");
                 char buf[220];
-                std::snprintf(buf,sizeof(buf),"%.1f FPS  |  %.2f ms work  |  %.1fx  |  %u tiles / %u walls  |  uploads %u",fps,workMs,viewer.camera.zoom,viewer.stats.tiles,viewer.stats.walls,viewer.stats.uploads);
+                std::snprintf(buf,sizeof(buf),"%.1f FPS  |  %.2f ms work  |  %.3fx  |  %u tiles / %u walls / %u objects  |  uploads %u",fps,workMs,viewer.camera.zoom,viewer.stats.tiles,viewer.stats.walls,viewer.stats.objects,viewer.stats.uploads);
                 text(renderer,12,28,buf);
-                std::snprintf(buf,sizeof(buf),"Texture payload %.2f MiB / 32  |  decoded %.2f / 8  |  segments %.2f / 4",
+                std::snprintf(buf,sizeof(buf),"Texture cache %.2f MiB / 32  |  decoded %.2f / 8  |  segments %.2f / 4",
                     viewer.stats.textureBytes/1048576.,viewer.stats.decodedBytes/1048576.,viewer.stats.segmentBytes/1048576.);
                 text(renderer,12,46,buf);
                 panel(renderer,height-48,48);
@@ -242,6 +249,9 @@ int main(int argc,char** argv) {
                 std::ofstream receipt(options.screenshot.string()+".json");
                 receipt << "{\n  \"map\": \"" << viewer.mapName() << "\",\n  \"frames\": " << frame
                     << ",\n  \"map_tiles\": " << viewer.tileCount() << ",\n  \"map_walls\": " << viewer.wallCount()
+                    << ",\n  \"zoom\": " << viewer.camera.zoom << ",\n  \"view_width\": " << width/viewer.camera.zoom
+                    << ",\n  \"view_height\": " << height/viewer.camera.zoom << ",\n  \"map_objects\": " << viewer.objectCount()
+                    << ",\n  \"visible_objects\": " << viewer.stats.objects
                     << ",\n  \"texture_bytes\": " << viewer.stats.textureBytes << ",\n  \"decoded_bytes\": " << viewer.stats.decodedBytes
                     << ",\n  \"segment_bytes\": " << viewer.stats.segmentBytes << ",\n  \"desktop_work_mean_ms\": " << mean
                     << ",\n  \"desktop_work_p95_ms\": " << p95 << ",\n  \"hardware_verified\": false\n}\n";

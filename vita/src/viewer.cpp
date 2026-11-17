@@ -25,6 +25,9 @@ void check(bool ok) { if (!ok) throw std::runtime_error(SDL_GetError()); }
 Viewer::Viewer(SDL_Renderer* renderer, const std::filesystem::path& dir)
     : renderer_(renderer), things_(nox::things::loadThingDb(nox::resolveNoCase(dir / "thing.bin"))),
       bag_(nox::resolveNoCase(dir / "video.bag"), nox::resolveNoCase(dir / "video.idx")) {
+    const auto modifiers=nox::resolveNoCase(dir / "modifier.bin");
+    if (std::filesystem::is_regular_file(modifiers)) modifiers_=nox::things::loadModifierDb(modifiers);
+    else SDL_Log("modifier.bin missing: item and equipment colours use fallback colours");
     // Only the normal maps/<name>/<name>.map layout; no recursive scan of user storage.
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(nox::resolveNoCase(dir / "maps"), ec)) {
@@ -36,7 +39,7 @@ Viewer::Viewer(SDL_Renderer* renderer, const std::filesystem::path& dir)
     }
     std::sort(maps_.begin(), maps_.end());
 }
-Viewer::~Viewer() { clearCaches(); }
+Viewer::~Viewer() { clearCaches(); SDL_DestroyTexture(scene_); }
 void Viewer::clearCaches() {
     for (auto& [key, texture] : textures_) SDL_DestroyTexture(texture.handle);
     textures_.clear(); decoded_.clear(); segments_.clear();
@@ -85,7 +88,7 @@ void Viewer::load(const std::filesystem::path& path) {
     const auto tile=std::min_element(nextTiles.begin(),nextTiles.end(),[&](const Tile& a,const Tile& b){
         return std::hypot(a.x+23-cx,a.y+23-cy)<std::hypot(b.x+23-cx,b.y+23-cy);
     });
-    Camera nextInitial{tile->x+23,tile->y+23,1};
+    Camera nextInitial{tile->x+23,tile->y+23,defaultZoom};
     // Prefer the real entry point: geometric map centres often fall in unreachable scenery.
     if (map.find(nox::map::ObjectTOC::kName) && map.find(nox::map::ObjectData::kName)) {
         const auto toc=nox::map::decodeSection<nox::map::ObjectTOC>(map);
@@ -95,11 +98,13 @@ void Viewer::load(const std::filesystem::path& path) {
             if (!starts.contains(record.tocId)) continue;
             const auto spawn=nox::map::ObjectXfer::parse(record.data);
             if (std::isfinite(spawn.header.x) && std::isfinite(spawn.header.y)) {
-                nextInitial={spawn.header.x,spawn.header.y,1};break;
+                nextInitial={spawn.header.x,spawn.header.y,defaultZoom};break;
             }
         }
     }
+    auto nextObjects=loadObjects(map);
     clearCaches();
+    objects_=std::move(nextObjects);
     tiles_=std::move(nextTiles); walls_=std::move(nextWalls);
     initial_=nextInitial; camera=initial_;
     mapName_=path.stem().string();
@@ -108,6 +113,14 @@ void Viewer::load(const std::filesystem::path& path) {
     SDL_Log("map=%s tiles=%u walls=%u",mapName_.c_str(),static_cast<unsigned>(tiles_.size()),static_cast<unsigned>(walls_.size()));
 }
 void Viewer::resetCamera() { camera=initial_; }
+void Viewer::stepZoom(int direction) {
+    if (direction>0) {
+        for (const auto value:zoomLevels) if (value>camera.zoom+.0001f) {camera.zoom=value;break;}
+    } else {
+        for (auto it=zoomLevels.rbegin();it!=zoomLevels.rend();++it) if (*it<camera.zoom-.0001f) {camera.zoom=*it;break;}
+    }
+    SDL_Log("Zoom %.3fx; view %.1f x %.1f",camera.zoom,width/camera.zoom,height/camera.zoom);
+}
 std::int32_t Viewer::index(const nox::things::ImageRef& ref) {
     return ref.index>=0 ? ref.index : static_cast<std::int32_t>(bag_.findImage(ref.name));
 }
@@ -198,24 +211,56 @@ Viewer::Texture& Viewer::wallTexture(const Wall& wall) {
 }
 void Viewer::drawTexture(Texture& t,float x,float y) {
     if (!t.handle) return;
-    const SDL_FRect dst{std::round((x+t.ox-camera.x)*camera.zoom+width/2),std::round((y+t.oy-camera.y)*camera.zoom+height/2),t.w*camera.zoom,t.h*camera.zoom};
+    const SDL_FRect dst{std::round(x+t.ox-originX_),std::round(y+t.oy-originY_),static_cast<float>(t.w),static_cast<float>(t.h)};
     check(SDL_RenderTexture(renderer_,t.handle,nullptr,&dst));
 }
 void Viewer::draw() {
-    stats.tiles=stats.walls=stats.uploads=stats.cacheMisses=0;
-    const float left=camera.x-width/(2*camera.zoom),right=camera.x+width/(2*camera.zoom);
-    const float top=camera.y-height/(2*camera.zoom),bottom=camera.y+height/(2*camera.zoom);
-    for (const auto& t:tiles_) {
-        if (t.x+46<left || t.x>right || t.y+46<top || t.y>bottom) continue;
-        auto& texture=tileTexture(t); drawTexture(texture,t.x,t.y); ++stats.tiles;
+    stats.tiles=stats.walls=stats.objects=stats.uploads=stats.cacheMisses=0;
+    const float viewW=width/camera.zoom,viewH=height/camera.zoom;
+    const int sw=static_cast<int>(std::ceil(viewW)),sh=static_cast<int>(std::ceil(viewH));
+    if (!scene_ || sw!=sceneW_ || sh!=sceneH_) {
+        auto* next=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,sw,sh);
+        if (!next) throw std::runtime_error(SDL_GetError());
+        SDL_SetTextureBlendMode(next,SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(next,SDL_SCALEMODE_NEAREST);
+        SDL_DestroyTexture(scene_);scene_=next;sceneW_=sw;sceneH_=sh;
     }
-    // Conservative sprite margin; exact clipped bounds are checked after the texture is known.
-    for (const auto& w:walls_) {
-        if (w.x+512<left || w.x-512>right || w.y+512<top || w.y-512>bottom) continue;
-        auto& t=wallTexture(w);
-        if (w.x+t.ox+t.w<left || w.x+t.ox>right || w.y+t.oy+t.h<top || w.y+t.oy>bottom) continue;
-        drawTexture(t,w.x,w.y); ++stats.walls;
-    }
+    // Compose at native asset resolution, then scale once: independently rounding
+    // fractional-size floor diamonds leaves seams between adjacent tiles.
+    auto* previous=SDL_GetRenderTarget(renderer_);
+    check(SDL_SetRenderTarget(renderer_,scene_));
+    originX_=std::floor(camera.x-viewW/2);originY_=std::floor(camera.y-viewH/2);
+    const float left=originX_,right=left+sw,top=originY_,bottom=top+sh;
+    try {
+        check(SDL_SetRenderDrawColor(renderer_,12,15,18,255));check(SDL_RenderClear(renderer_));
+        for (const auto& t:tiles_) {
+            if (t.x+46<left || t.x>right || t.y+46<top || t.y>bottom) continue;
+            auto& texture=tileTexture(t);drawTexture(texture,t.x,t.y);++stats.tiles;
+        }
+        auto visible=[&](float x,float y,const Texture& t) {
+            return t.handle && x+t.ox+t.w>=left && x+t.ox<=right && y+t.oy+t.h>=top && y+t.oy<=bottom;
+        };
+        auto drawObject=[&](const Object& o) {
+            if (o.x+512<left || o.x-512>right || o.y+512<top || o.y-512>bottom) return;
+            bool drawn=false;
+            for (const auto& layer:o.layers) {
+                auto& t=objectTexture(layer);
+                if (visible(o.x,o.y,t)) {drawTexture(t,o.x,o.y);drawn=true;}
+            }
+            if (drawn) ++stats.objects;
+        };
+        auto object=objects_.begin();
+        for (const auto& w:walls_) {
+            while (object!=objects_.end() && object->sortY<=w.sortY) drawObject(*object++);
+            if (w.x+512<left || w.x-512>right || w.y+512<top || w.y-512>bottom) continue;
+            auto& t=wallTexture(w);
+            if (visible(w.x,w.y,t)) {drawTexture(t,w.x,w.y);++stats.walls;}
+        }
+        while (object!=objects_.end()) drawObject(*object++);
+    } catch (...) {SDL_SetRenderTarget(renderer_,previous);throw;}
+    check(SDL_SetRenderTarget(renderer_,previous));
+    const SDL_FRect source{0,0,viewW,viewH},dest{0,0,static_cast<float>(width),static_cast<float>(height)};
+    check(SDL_RenderTexture(renderer_,scene_,&source,&dest));
     stats.textures=textures_.size();
 }
 }

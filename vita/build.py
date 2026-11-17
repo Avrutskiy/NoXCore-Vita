@@ -77,7 +77,7 @@ def main():
         if archive.testzip() is not None:
             raise RuntimeError("VPK CRC failure")
         fields = sfo_fields(archive.read("sce_sys/param.sfo"))
-        if fields.get("TITLE_ID") != "NXVM00001" or fields.get("APP_VER") != "01.01":
+        if fields.get("TITLE_ID") != "NXVM00001" or fields.get("APP_VER") != "01.02":
             raise RuntimeError("Unexpected VPK identity")
         if archive.getinfo("eboot.bin").file_size == 0:
             raise RuntimeError("Empty executable")
@@ -90,6 +90,8 @@ def main():
         if path.is_file():
             inputs.add(path)
             inputs.update(path.parent.glob("*.hpp"))
+    inputs.update((root / "noxsdl/src").glob("*.hpp"))
+    inputs.update(root / "noxsdl/src" / name for name in ("thing_art.cpp", "player_art.cpp", "light_cone.cpp"))
     manifest = {str(p.relative_to(root)): digest(p) for p in sorted(inputs) if p.is_file()}
     receipt = {
         "title_id": fields["TITLE_ID"], "version": fields["APP_VER"], "sfo": fields,

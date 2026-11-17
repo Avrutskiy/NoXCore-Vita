@@ -3,7 +3,9 @@
 #include "noxcore/things/thing_db.hpp"
 #include "noxcore/video/video_bag.hpp"
 #include "noxcore/video/sprite.hpp"
+#include "player_art.hpp"
 #include <SDL3/SDL.h>
+#include <array>
 #include <filesystem>
 #include <list>
 #include <map>
@@ -15,10 +17,14 @@ namespace vita_viewer {
 constexpr int width = 960, height = 544;
 struct Tile { float x, y; nox::map::FloorTile tile; std::string key; };
 struct Wall { float x, y, sortY; nox::things::ImageRef image; };
-struct Camera { float x = 0, y = 0, zoom = 1; };
+constexpr float defaultZoom = 544.f / 480.f;
+inline constexpr std::array zoomLevels{.5f, 1.f, defaultZoom, 1.2f, 1.4f, 1.5f, 2.f};
+struct Camera { float x = 0, y = 0, zoom = defaultZoom; };
+struct ObjectLayer { nox::things::ImageRef image; std::optional<noxsdl::MaterialColours> colours; std::string key; };
+struct Object { float x, y, sortY; std::vector<ObjectLayer> layers; };
 struct Stats {
     std::size_t textures = 0, textureBytes = 0, decodedBytes = 0, segmentBytes = 0;
-    unsigned tiles = 0, walls = 0, uploads = 0, cacheMisses = 0;
+    unsigned tiles = 0, walls = 0, objects = 0, uploads = 0, cacheMisses = 0;
 };
 
 class Viewer {
@@ -28,12 +34,14 @@ public:
     void load(const std::filesystem::path& map);
     void draw();
     void resetCamera();
+    void stepZoom(int direction);
     void clearCaches();
     Camera camera;
     Stats stats;
     const std::vector<std::filesystem::path>& maps() const { return maps_; }
     const std::string& mapName() const { return mapName_; }
     std::size_t tileCount() const { return tiles_.size(); }
+    std::size_t objectCount() const { return objects_.size(); }
     std::size_t wallCount() const { return walls_.size(); }
 private:
     struct Texture {
@@ -52,11 +60,18 @@ private:
     std::shared_ptr<const nox::video::DecodedImage> floorImage(std::uint8_t floor, std::int16_t variant);
     Texture& upload(const std::string& key, const nox::video::DecodedImage& image);
     Texture& tileTexture(const Tile& tile);
+    std::vector<Object> loadObjects(const nox::map::MapFile& map);
+    Texture& objectTexture(const ObjectLayer& layer);
     Texture& wallTexture(const Wall& wall);
     void drawTexture(Texture& texture, float x, float y);
     SDL_Renderer* renderer_;
     nox::things::ThingDb things_;
     nox::video::VideoBag bag_;
+    nox::things::ModifierDb modifiers_;
+    std::vector<Object> objects_;
+    SDL_Texture* scene_ = nullptr;
+    int sceneW_ = 0, sceneH_ = 0;
+    float originX_ = 0, originY_ = 0;
     std::vector<Tile> tiles_;
     std::vector<Wall> walls_;
     std::vector<std::filesystem::path> maps_;

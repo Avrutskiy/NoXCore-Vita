@@ -4,19 +4,26 @@ First milestone of NoXCore-Vita, based on original upstream commit
 `be29b2b1cca091349ab118ae8a354e9a04e983e1`. The engine and codecs come directly
 from `mordentral/NoXCore`; no Mac implementation is included.
 
-Version 0.1.1 (VPK 01.01) fixes a crash in the once-per-second status logger.
-Vita newlib did not consume `%zu` arguments, causing the following `%s` to treat
-the texture byte count as an address. Both initial hardware dumps resolve to
-`strlen` called from `_svfprintf_r` with that exact count. The viewer now uses
-supported unsigned formats, runs a formatting check on the target at startup,
-and retains line information in the host ELF for future crash diagnosis.
+Version 0.1.2 (VPK 01.02) adds fractional zoom presets and placed map objects.
+The default is exactly 17/15 (displayed as 1.133×): a 847.06×480 world view on
+Vita's 960×544 screen. The scene is composed at native asset resolution and
+scaled once with nearest-neighbour sampling to avoid seams between floor tiles.
+The HUD stays at screen resolution.
 
-This build renders the original map's floors, edge blends and walls, including
-window variants and initially open secret walls. It opens at the map's first
-PlayerStart marker when one exists. It is a geometry viewer: objects, actors,
-animation, lighting, sound and gameplay are not implemented yet.
+Floors, edge blends, walls, window variants and initially open secret walls are
+shown alongside props, doors, items, creatures and NPCs. Original upstream
+`ThingArt` and `player_art` select still images, saved door angles, NPC equipment
+layers and material colours. Only top-level objects are placed; inventory items
+appear only when worn by an NPC. Editor markers and disabled fires are hidden.
+Floor decals draw before upright objects; walls and upright objects share a
+simple y sort. Full original wall occlusion, code-drawn effects, animation,
+lighting, sound and gameplay are not implemented yet. The view opens at the
+first PlayerStart marker.
 
-Only stock `thing.bin`, `video.idx`, `video.bag` and `.MAP` files are used. HD
+The 0.1.1 status-logger crash fix and target-side formatting check are retained;
+see [CRASH-01.00.md](CRASH-01.00.md).
+
+Only stock `thing.bin`, `modifier.bin`, `video.idx`, `video.bag` and `.MAP` files are used. HD
 packs, content packs, editors, Luau, networking and OpenGL shader plugins are
 outside this target. SDL3's native GXM renderer is selected explicitly. The
 application does not alter clocks or install plugins.
@@ -29,6 +36,7 @@ application does not alter clocks or install plugins.
 
    ```text
    ux0:data/nox/thing.bin
+   ux0:data/nox/modifier.bin
    ux0:data/nox/video.idx
    ux0:data/nox/video.bag
    ux0:data/nox/maps/WAR01A/WAR01A.MAP
@@ -43,9 +51,9 @@ application does not alter clocks or install plugins.
 | Vita control | Action |
 | --- | --- |
 | Left stick / D-pad | Pan |
-| L / R | Zoom out / in (0.5×, 1×, 2×) |
+| L / R | Zoom out / in (0.5×, 1×, 1.133×, 1.2×, 1.4×, 1.5×, 2×) |
 | Cross / Circle | Next / previous installed map, alphabetically |
-| Square | Return to map entry point at 1× |
+| Square | Return to map entry point at 1.133× |
 | Triangle | Clear image caches for a cold-load comparison |
 | Start + Select | Exit |
 
@@ -81,9 +89,11 @@ checks ZIP CRCs, records hashes and writes `build/vita-viewer/build-receipt.json
 It never downloads or copies game data. If SDL3 is already installed in VitaSDK,
 omit `--sdl-source` and CMake will use its package configuration instead.
 
-The standalone CMake project compiles the shared upstream asset codecs and this
-viewer only. `NOX_STOCK_ASSETS_ONLY` removes content-pack application from the
-thing database loader for this target; the desktop build keeps its existing
+The standalone CMake project compiles shared upstream asset codecs, appearance
+selection helpers and this viewer. NPC pose selection was moved unchanged out
+of `client/world.cpp` into `client/npc_pose.cpp` so the viewer can use it without
+linking the simulation. `NOX_STOCK_ASSETS_ONLY` removes content-pack application from the
+thing and modifier database loaders for this target; the desktop build keeps its existing
 behavior. The hash cast in `util/text.hpp` makes the existing 32-bit truncation
 explicit without changing the hash result.
 
@@ -100,19 +110,24 @@ build/host-viewer/nox_vita_viewer --game-dir /path/to/Nox \
 
 Headless mode creates no window and uses SDL's software renderer. It saves the
 960×544 image and an adjacent JSON receipt. `--tour` moves the camera to exercise
-cache reuse. Without it, the screenshot stays at the entry point. Timings in
+cache reuse. `--zoom 1.2` selects a scale for screenshot checks; `--zoom 1.133`
+selects exact 17/15. Without `--tour`, the screenshot stays at the entry point. Timings in
 these receipts are desktop CPU timings, not Vita performance.
 
-The initial build has rendered WAR01A, CON01A and WIZ01A with real game assets.
-Vita cross-compilation, ELF/SELF conversion and VPK generation have passed.
-The initial version loaded and displayed WAR01A on hardware, then crashed in its
-status logger. Version 0.1.1 still needs a hardware retest; sustained frame rate,
-controls and suspend/resume are **not yet verified**.
+Version 0.1.2 has rendered WAR01A (2,592 placed objects), CON01A (1,478), and
+WIZ01A (2,000) with real game assets on the desktop software renderer. All seven
+zoom levels passed 180-frame moving-camera runs with cache budgets checked;
+1.133× reports exactly 480 world units vertically. Vita cross-compilation,
+ELF/SELF conversion and VPK validation passed. These are not hardware timings.
+The user reported 0.1.1 running on hardware with lows around 20 FPS; 0.1.2's
+extra object draw calls and scene pass still need hardware measurement.
 
 ## Memory and measurements
 
 - Newlib heap reservation: 128 MiB.
 - Retained RGBA texture payload: at most 32 MiB (GXM row alignment included).
+- Scene target: one viewport, resized on zoom; RGBA payload about 1.55 MiB at
+  default zoom, up to 7.97 MiB at 0.5×, plus GXM depth/target allocations.
 - Retained decoded images: at most 8 MiB.
 - Retained bag segments: at most 4 MiB. A larger individual segment may be decoded
   temporarily, but is dropped after that request.
@@ -126,5 +141,5 @@ map drawing and texture uploads before the HUD and presentation; it is not a GPU
 timer. FPS includes presentation and pacing. Record a warm view, a cold pan and a
 map transition on the actual Vita before drawing performance conclusions.
 
-Next milestones: hardware validation, static object rendering, then a single
+Next milestones: hardware performance validation, animation and lighting, then a single
 offline playable scene using stock assets.

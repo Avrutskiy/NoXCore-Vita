@@ -3,7 +3,9 @@
 #include "noxcore/things/modifier.hpp"
 #include "noxcore/util/x87.hpp"
 
+#ifndef NOX_STOCK_ASSETS_ONLY
 #include "noxcore/content/content_pack.hpp"
+#endif
 #include "noxcore/crypto/noxcrypt.hpp"
 #include "noxcore/io/byte_reader.hpp"
 #include "noxcore/io/file.hpp"
@@ -680,7 +682,9 @@ ModifierDb loadModifierDb(const std::filesystem::path& path)
 {
     auto data = readFileBytes(path);
     crypto::cipherForKey(crypto::FileKey::ModifierBin).decrypt(data);
+#ifndef NOX_STOCK_ASSETS_ONLY
     content::applyContentPacks(content::TableFormat::Modifier, data); // (the installed content packs' changes, once, as it loads; none installed: nothing)
+#endif
     return parseModifierDb(std::string_view(reinterpret_cast<const char*>(data.data()), data.size()));
 }
 

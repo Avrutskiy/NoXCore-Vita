@@ -37,6 +37,7 @@ add_library(noxcore
     src/client/solo_saves.cpp
     src/client/spell_bars.cpp
     src/client/world.cpp
+    src/client/npc_pose.cpp
     src/config/nox_config.cpp
     src/crypto/blowfish.cpp
     src/crypto/blowfish_tables.cpp
