@@ -1,4 +1,5 @@
 #pragma once
+#include "camera.hpp"
 #include "noxcore/map/sections.hpp"
 #include "noxcore/things/thing_db.hpp"
 #include "noxcore/video/video_bag.hpp"
@@ -14,17 +15,13 @@
 #include <vector>
 
 namespace vita_viewer {
-constexpr int width = 960, height = 544;
 struct Tile { float x, y; nox::map::FloorTile tile; std::string key; };
 struct Wall { float x, y, sortY; nox::things::ImageRef image; };
-constexpr float defaultZoom = 544.f / 480.f;
-inline constexpr std::array zoomLevels{.5f, 1.f, defaultZoom, 1.2f, 1.4f, 1.5f, 2.f};
-struct Camera { float x = 0, y = 0, zoom = defaultZoom; };
 struct ObjectLayer { nox::things::ImageRef image; std::optional<noxsdl::MaterialColours> colours; std::string key; };
 struct Object { float x, y, sortY; std::vector<ObjectLayer> layers; };
 struct Stats {
     std::size_t textures = 0, textureBytes = 0, decodedBytes = 0, segmentBytes = 0;
-    unsigned tiles = 0, walls = 0, objects = 0, uploads = 0, cacheMisses = 0;
+    unsigned tiles = 0, walls = 0, objects = 0, uploads = 0, cacheMisses = 0, sceneRebuilds = 0;
 };
 
 class Viewer {
@@ -70,8 +67,7 @@ private:
     nox::things::ModifierDb modifiers_;
     std::vector<Object> objects_;
     SDL_Texture* scene_ = nullptr;
-    int sceneW_ = 0, sceneH_ = 0;
-    float originX_ = 0, originY_ = 0;
+    SceneWindow sceneWindow_;
     std::vector<Tile> tiles_;
     std::vector<Wall> walls_;
     std::vector<std::filesystem::path> maps_;

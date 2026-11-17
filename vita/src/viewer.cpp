@@ -41,6 +41,7 @@ Viewer::Viewer(SDL_Renderer* renderer, const std::filesystem::path& dir)
 }
 Viewer::~Viewer() { clearCaches(); SDL_DestroyTexture(scene_); }
 void Viewer::clearCaches() {
+    sceneWindow_.valid=false;
     for (auto& [key, texture] : textures_) SDL_DestroyTexture(texture.handle);
     textures_.clear(); decoded_.clear(); segments_.clear();
     stats.textureBytes = stats.decodedBytes = stats.segmentBytes = stats.textures = 0;
@@ -211,55 +212,65 @@ Viewer::Texture& Viewer::wallTexture(const Wall& wall) {
 }
 void Viewer::drawTexture(Texture& t,float x,float y) {
     if (!t.handle) return;
-    const SDL_FRect dst{std::round(x+t.ox-originX_),std::round(y+t.oy-originY_),static_cast<float>(t.w),static_cast<float>(t.h)};
+    const SDL_FRect dst{std::round(x+t.ox)-sceneWindow_.x,std::round(y+t.oy)-sceneWindow_.y,static_cast<float>(t.w),static_cast<float>(t.h)};
     check(SDL_RenderTexture(renderer_,t.handle,nullptr,&dst));
 }
 void Viewer::draw() {
-    stats.tiles=stats.walls=stats.objects=stats.uploads=stats.cacheMisses=0;
+    stats.uploads=stats.cacheMisses=0;
     const float viewW=width/camera.zoom,viewH=height/camera.zoom;
-    const int sw=static_cast<int>(std::ceil(viewW)),sh=static_cast<int>(std::ceil(viewH));
-    if (!scene_ || sw!=sceneW_ || sh!=sceneH_) {
+    const int sw=SceneWindow::extent(viewW),sh=SceneWindow::extent(viewH);
+    if (!scene_ || sw!=sceneWindow_.w || sh!=sceneWindow_.h) {
         auto* next=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,sw,sh);
         if (!next) throw std::runtime_error(SDL_GetError());
-        SDL_SetTextureBlendMode(next,SDL_BLENDMODE_NONE);
-        SDL_SetTextureScaleMode(next,SDL_SCALEMODE_NEAREST);
-        SDL_DestroyTexture(scene_);scene_=next;sceneW_=sw;sceneH_=sh;
+        try {
+            check(SDL_SetTextureBlendMode(next,SDL_BLENDMODE_NONE));
+            // Only the composed scene is filtered. Original tiles/sprites remain
+            // pixel-aligned, so subpixel panning cannot open seams between them.
+            check(SDL_SetTextureScaleMode(next,SDL_SCALEMODE_LINEAR));
+        } catch (...) {SDL_DestroyTexture(next);throw;}
+        SDL_DestroyTexture(scene_);scene_=next;sceneWindow_.valid=false;
     }
-    // Compose at native asset resolution, then scale once: independently rounding
-    // fractional-size floor diamonds leaves seams between adjacent tiles.
     auto* previous=SDL_GetRenderTarget(renderer_);
-    check(SDL_SetRenderTarget(renderer_,scene_));
-    originX_=std::floor(camera.x-viewW/2);originY_=std::floor(camera.y-viewH/2);
-    const float left=originX_,right=left+sw,top=originY_,bottom=top+sh;
-    try {
-        check(SDL_SetRenderDrawColor(renderer_,12,15,18,255));check(SDL_RenderClear(renderer_));
-        for (const auto& t:tiles_) {
-            if (t.x+46<left || t.x>right || t.y+46<top || t.y>bottom) continue;
-            auto& texture=tileTexture(t);drawTexture(texture,t.x,t.y);++stats.tiles;
-        }
-        auto visible=[&](float x,float y,const Texture& t) {
-            return t.handle && x+t.ox+t.w>=left && x+t.ox<=right && y+t.oy+t.h>=top && y+t.oy<=bottom;
-        };
-        auto drawObject=[&](const Object& o) {
-            if (o.x+512<left || o.x-512>right || o.y+512<top || o.y-512>bottom) return;
-            bool drawn=false;
-            for (const auto& layer:o.layers) {
-                auto& t=objectTexture(layer);
-                if (visible(o.x,o.y,t)) {drawTexture(t,o.x,o.y);drawn=true;}
+    if (!sceneWindow_.contains(camera)) {
+        sceneWindow_.place(camera);
+        check(SDL_SetRenderTarget(renderer_,scene_));
+        stats.tiles=stats.walls=stats.objects=0;
+        const float left=sceneWindow_.x,right=left+sw,top=sceneWindow_.y,bottom=top+sh;
+        try {
+            check(SDL_SetRenderDrawColor(renderer_,12,15,18,255));check(SDL_RenderClear(renderer_));
+            for (const auto& t:tiles_) {
+                if (t.x+46<left || t.x>right || t.y+46<top || t.y>bottom) continue;
+                auto& texture=tileTexture(t);drawTexture(texture,t.x,t.y);++stats.tiles;
             }
-            if (drawn) ++stats.objects;
-        };
-        auto object=objects_.begin();
-        for (const auto& w:walls_) {
-            while (object!=objects_.end() && object->sortY<=w.sortY) drawObject(*object++);
-            if (w.x+512<left || w.x-512>right || w.y+512<top || w.y-512>bottom) continue;
-            auto& t=wallTexture(w);
-            if (visible(w.x,w.y,t)) {drawTexture(t,w.x,w.y);++stats.walls;}
-        }
-        while (object!=objects_.end()) drawObject(*object++);
-    } catch (...) {SDL_SetRenderTarget(renderer_,previous);throw;}
-    check(SDL_SetRenderTarget(renderer_,previous));
-    const SDL_FRect source{0,0,viewW,viewH},dest{0,0,static_cast<float>(width),static_cast<float>(height)};
+            auto visible=[&](float x,float y,const Texture& t) {
+                return t.handle && x+t.ox+t.w>=left && x+t.ox<=right && y+t.oy+t.h>=top && y+t.oy<=bottom;
+            };
+            auto drawObject=[&](const Object& o) {
+                if (o.x+512<left || o.x-512>right || o.y+512<top || o.y-512>bottom) return;
+                bool drawn=false;
+                for (const auto& layer:o.layers) {
+                    auto& t=objectTexture(layer);
+                    if (visible(o.x,o.y,t)) {drawTexture(t,o.x,o.y);drawn=true;}
+                }
+                if (drawn) ++stats.objects;
+            };
+            auto object=objects_.begin();
+            for (const auto& w:walls_) {
+                while (object!=objects_.end() && object->sortY<=w.sortY) drawObject(*object++);
+                if (w.x+512<left || w.x-512>right || w.y+512<top || w.y-512>bottom) continue;
+                auto& t=wallTexture(w);
+                if (visible(w.x,w.y,t)) {drawTexture(t,w.x,w.y);++stats.walls;}
+            }
+            while (object!=objects_.end()) drawObject(*object++);
+        } catch (...) {SDL_SetRenderTarget(renderer_,previous);throw;}
+        check(SDL_SetRenderTarget(renderer_,previous));
+        sceneWindow_.valid=true;
+        ++stats.sceneRebuilds;
+    }
+    // Carry the complete fractional position into GXM's texture coordinates.
+    // Rebasing the integer cache origin leaves this world-to-screen mapping unchanged.
+    const SDL_FRect source{camera.x-viewW/2-sceneWindow_.x,camera.y-viewH/2-sceneWindow_.y,viewW,viewH};
+    const SDL_FRect dest{0,0,static_cast<float>(width),static_cast<float>(height)};
     check(SDL_RenderTexture(renderer_,scene_,&source,&dest));
     stats.textures=textures_.size();
 }

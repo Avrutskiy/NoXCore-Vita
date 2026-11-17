@@ -77,12 +77,13 @@ def main():
         if archive.testzip() is not None:
             raise RuntimeError("VPK CRC failure")
         fields = sfo_fields(archive.read("sce_sys/param.sfo"))
-        if fields.get("TITLE_ID") != "NXVM00001" or fields.get("APP_VER") != "01.02":
+        if fields.get("TITLE_ID") != "NXVM00001" or fields.get("APP_VER") != "01.03":
             raise RuntimeError("Unexpected VPK identity")
         if archive.getinfo("eboot.bin").file_size == 0:
             raise RuntimeError("Empty executable")
     inputs = {root / "vita/CMakeLists.txt", root / "vita/build.py"}
     inputs.update((root / "vita/src").glob("*"))
+    inputs.update((root / "vita/tests").glob("*.cpp"))
     inputs.update((root / "noxcore/include").rglob("*.hpp"))
     cmake = (root / "vita/CMakeLists.txt").read_text()
     for relative in re.findall(r"\$\{CORE\}/([^\s)]+)", cmake):

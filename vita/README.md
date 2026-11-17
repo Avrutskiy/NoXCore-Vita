@@ -4,11 +4,22 @@ First milestone of NoXCore-Vita, based on original upstream commit
 `be29b2b1cca091349ab118ae8a354e9a04e983e1`. The engine and codecs come directly
 from `mordentral/NoXCore`; no Mac implementation is included.
 
-Version 0.1.2 (VPK 01.02) adds fractional zoom presets and placed map objects.
-The default is exactly 17/15 (displayed as 1.133×): a 847.06×480 world view on
-Vita's 960×544 screen. The scene is composed at native asset resolution and
-scaled once with nearest-neighbour sampling to avoid seams between floor tiles.
-The HUD stays at screen resolution.
+Version 0.1.3 (VPK 01.03) fixes scrolling and uses the selected 1.5× default
+(640×362.67 world units on Vita's 960×544 screen). All seven zoom presets remain.
+The camera retains its fractional position through the final texture sampling;
+only the native-resolution scene cache has an integer origin. A single linear
+filter on the completed scene gives continuous movement, with slightly softer
+pixel edges than nearest-neighbour scaling. Tiles and sprite layers stay aligned
+before scaling, and the HUD stays sharp at screen resolution.
+
+The static scene cache includes a 64-unit border and a filter guard texel, so
+ordinary panning reuses one composed texture. Leaving the border, changing zoom
+size, switching maps or clearing caches rebuilds it. This cache is for the static
+viewer: animation/gameplay will need explicit dynamic drawing or invalidation.
+The analog stick has a rescaled radial dead zone and fine low-speed control;
+diagonal movement is normalized. Movement uses elapsed time without artificial
+camera easing or release drift. Long stalls are capped at 100 ms, and map loads,
+reset and resume restart the camera clock.
 
 Floors, edge blends, walls, window variants and initially open secret walls are
 shown alongside props, doors, items, creatures and NPCs. Original upstream
@@ -53,7 +64,7 @@ application does not alter clocks or install plugins.
 | Left stick / D-pad | Pan |
 | L / R | Zoom out / in (0.5×, 1×, 1.133×, 1.2×, 1.4×, 1.5×, 2×) |
 | Cross / Circle | Next / previous installed map, alphabetically |
-| Square | Return to map entry point at 1.133× |
+| Square | Return to map entry point at 1.5× |
 | Triangle | Clear image caches for a cold-load comparison |
 | Start + Select | Exit |
 
@@ -114,27 +125,42 @@ cache reuse. `--zoom 1.2` selects a scale for screenshot checks; `--zoom 1.133`
 selects exact 17/15. Without `--tour`, the screenshot stays at the entry point. Timings in
 these receipts are desktop CPU timings, not Vita performance.
 
-Version 0.1.2 has rendered WAR01A (2,592 placed objects), CON01A (1,478), and
-WIZ01A (2,000) with real game assets on the desktop software renderer. All seven
-zoom levels passed 180-frame moving-camera runs with cache budgets checked;
-1.133× reports exactly 480 world units vertically. Vita cross-compilation,
-ELF/SELF conversion and VPK validation passed. These are not hardware timings.
-The user reported 0.1.1 running on hardware with lows around 20 FPS; 0.1.2's
-extra object draw calls and scene pass still need hardware measurement.
+The 0.1.2 object pass rendered WAR01A (2,592 placed objects), CON01A (1,478),
+and WIZ01A (2,000) with real game assets. Version 0.1.3 adds scrolling regression
+checks for dead-zone continuity, equal axial/diagonal speed, motion at 20/30/60/120
+FPS, every zoom, scene rebasing, cache invalidation, map changes and reset.
+
+```sh
+cmake -S vita -B build/host-viewer -DNOX_VIEWER_TESTS=ON
+cmake --build build/host-viewer -j 4
+build/host-viewer/nox_scroll_test /path/to/Nox
+build/host-viewer/nox_scroll_test /path/to/Nox --gpu
+```
+
+Both software and accelerated Metal checks passed. SDL's software copy path
+truncates fractional source coordinates, so only `--gpu` tests subpixel image
+motion. At every zoom, eight successive 1/8-world-pixel moves changed the GPU
+image without a scene rebuild. Rebuilding at the same world view gave identical
+pixels at 1.5× (and mean channel error below 0.002/255 across all presets).
+A three-second, 180-frame pan rebuilt the scene 12 times. These are desktop
+correctness/draw-count checks, not Vita FPS measurements. Vita compilation,
+ELF/SELF conversion and VPK validation also passed; hardware scrolling and FPS
+still need a retest. The user reported low FPS and judder with 0.1.2.
 
 ## Memory and measurements
 
 - Newlib heap reservation: 128 MiB.
 - Retained RGBA texture payload: at most 32 MiB (GXM row alignment included).
-- Scene target: one viewport, resized on zoom; RGBA payload about 1.55 MiB at
-  default zoom, up to 7.97 MiB at 0.5×, plus GXM depth/target allocations.
+- Scene target: one padded viewport, resized on zoom; RGBA payload about
+  1.46 MiB at default 1.5×, up to 9.56 MiB at 0.5×, plus GXM depth/target allocations.
 - Retained decoded images: at most 8 MiB.
 - Retained bag segments: at most 4 MiB. A larger individual segment may be decoded
   temporarily, but is dropped after that request.
 - Map changes clear the caches. Transient decoding buffers, the map, thing database,
   container overhead, the framebuffer and SDL's renderer allocations are additional.
 
-The HUD separates texture payload from free OS pools. SDL's GXM backend reserves
+The HUD scene counts describe the padded cached view, and uploads count only
+the current frame. The HUD separates texture payload from free OS pools. SDL's GXM backend reserves
 a CDRAM texture pool internally, so low reported free CDRAM is not equivalent to
 the viewer having filled its texture cache. The displayed work time covers input,
 map drawing and texture uploads before the HUD and presentation; it is not a GPU

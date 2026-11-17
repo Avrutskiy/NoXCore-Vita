@@ -37,7 +37,7 @@ Options arguments(int argc,char** argv) {
         else if (s=="--frames") o.frames=std::clamp(std::stoi(value()),1,10000);
         else if (s=="--zoom") {
             o.zoom=std::stof(value());
-            if (std::abs(o.zoom-1.133f)<.00001f) o.zoom=defaultZoom;
+            if (std::abs(o.zoom-1.133f)<.00001f) o.zoom=classicHeightZoom;
             if (!std::isfinite(o.zoom) || o.zoom<.5f || o.zoom>2.f) throw std::runtime_error("Zoom must be between 0.5 and 2");
         }
         else if (s=="--tour") o.tour=true;
@@ -101,7 +101,7 @@ int main(int argc,char** argv) {
         sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
 #endif
         SDL_SetLogOutputFunction(logOutput,nullptr);
-        SDL_SetAppMetadata("Nox Map Viewer","0.1.2","org.noxcore.vita.viewer");
+        SDL_SetAppMetadata("Nox Map Viewer","0.1.3","org.noxcore.vita.viewer");
         const bool headless=!options.screenshot.empty();
         check(SDL_Init(headless ? 0 : SDL_INIT_VIDEO));
         if (headless) {
@@ -119,7 +119,7 @@ int main(int argc,char** argv) {
         }
         if (!renderer) throw std::runtime_error(SDL_GetError());
         if (!headless) SDL_SetRenderVSync(renderer,1);
-        SDL_Log("Nox Map Viewer 0.1.2; renderer=%s; stock assets only",SDL_GetRendererName(renderer));
+        SDL_Log("Nox Map Viewer 0.1.3; renderer=%s; stock assets only",SDL_GetRendererName(renderer));
         verifyStatusFormatting();
         beginFrame(renderer);
         text(renderer,24,235,"Nox Map Viewer - loading original game data...");
@@ -133,11 +133,12 @@ int main(int argc,char** argv) {
                 if (viewer.maps()[i].stem()==options.map.stem()) mapIndex=i;
             viewer.camera.zoom=options.zoom;
             const auto initial=viewer.camera;
+            bool resetClock=false;
             auto switchMap=[&](int direction) {
                 if (viewer.maps().empty()) return;
                 const auto next=static_cast<std::size_t>((static_cast<int>(mapIndex)+direction+static_cast<int>(viewer.maps().size()))%static_cast<int>(viewer.maps().size()));
                 beginFrame(renderer); text(renderer,24,250,"Loading "+viewer.maps()[next].stem().string()+"..."); SDL_RenderPresent(renderer);
-                viewer.load(viewer.maps()[next]); mapIndex=next;
+                viewer.load(viewer.maps()[next]); mapIndex=next;resetClock=true;
             };
             auto zoom=[&](int direction) {viewer.stepZoom(direction);};
             bool running=true,paused=false;
@@ -151,12 +152,12 @@ int main(int argc,char** argv) {
             std::vector<double> timings;
             while (running) {
                 const auto started=SDL_GetTicksNS();
-                const float dt=std::min(.05f,static_cast<float>(started-previous)/1e9f); previous=started;
+                float dt=std::min(.1f,static_cast<float>(started-previous)/1e9f); previous=started;
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
                     if (event.type==SDL_EVENT_QUIT) running=false;
                     if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) paused=true;
-                    if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) {paused=false;previous=SDL_GetTicksNS();}
+                    if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) {paused=false;resetClock=true;}
                     if (event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
                         try {
                             switch(event.key.key) {
@@ -165,7 +166,7 @@ int main(int argc,char** argv) {
                             case SDLK_P: switchMap(-1); break;
                             case SDLK_EQUALS: zoom(1); break;
                             case SDLK_MINUS: zoom(-1); break;
-                            case SDLK_R: viewer.resetCamera(); break;
+                            case SDLK_R: viewer.resetCamera();resetClock=true;break;
                             case SDLK_C: viewer.clearCaches(); break;
                             default: break;
                             }
@@ -181,8 +182,8 @@ int main(int argc,char** argv) {
                     const auto pressed=pad.buttons & ~previousButtons;
                     previousButtons=pad.buttons;
                     if ((pad.buttons & (SCE_CTRL_START|SCE_CTRL_SELECT))==(SCE_CTRL_START|SCE_CTRL_SELECT)) running=false;
-                    auto axis=[](int v) {const float a=(v-128)/127.f;return std::abs(a)<.18f ? 0.f : a;};
-                    dx=axis(pad.lx);dy=axis(pad.ly);
+                    const auto stick=stickPan(pad.lx,pad.ly);
+                    dx=stick.x;dy=stick.y;
                     if (pad.buttons&SCE_CTRL_LEFT) dx=-1;
                     if (pad.buttons&SCE_CTRL_RIGHT) dx=1;
                     if (pad.buttons&SCE_CTRL_UP) dy=-1;
@@ -192,7 +193,7 @@ int main(int argc,char** argv) {
                         if (pressed&SCE_CTRL_CIRCLE) switchMap(-1);
                         if (pressed&SCE_CTRL_RTRIGGER) zoom(1);
                         if (pressed&SCE_CTRL_LTRIGGER) zoom(-1);
-                        if (pressed&SCE_CTRL_SQUARE) viewer.resetCamera();
+                        if (pressed&SCE_CTRL_SQUARE) {viewer.resetCamera();resetClock=true;}
                         if (pressed&SCE_CTRL_TRIANGLE) viewer.clearCaches();
                     } catch(const std::exception& e) {notice=e.what();SDL_Log("Map selection failed: %s",e.what());}
                 }
@@ -203,8 +204,8 @@ int main(int argc,char** argv) {
                     dy=static_cast<float>(keys[SDL_SCANCODE_DOWN]||keys[SDL_SCANCODE_S])-static_cast<float>(keys[SDL_SCANCODE_UP]||keys[SDL_SCANCODE_W]);
                 }
 #endif
-                viewer.camera.x+=dx*360*dt/viewer.camera.zoom;
-                viewer.camera.y+=dy*360*dt/viewer.camera.zoom;
+                if (resetClock) {dt=0;previous=SDL_GetTicksNS();resetClock=false;}
+                panCamera(viewer.camera,{dx,dy},dt);
                 if (headless && options.tour) {
                     const double phase=frame*.08;
                     viewer.camera.x=initial.x+static_cast<float>(std::sin(phase)*700);
@@ -217,7 +218,7 @@ int main(int argc,char** argv) {
                 panel(renderer,0,72);
                 text(renderer,12,10,"NOX / VITA MAP VIEWER     "+viewer.mapName()+"     ORIGINAL ASSETS");
                 char buf[220];
-                std::snprintf(buf,sizeof(buf),"%.1f FPS  |  %.2f ms work  |  %.3fx  |  %u tiles / %u walls / %u objects  |  uploads %u",fps,workMs,viewer.camera.zoom,viewer.stats.tiles,viewer.stats.walls,viewer.stats.objects,viewer.stats.uploads);
+                std::snprintf(buf,sizeof(buf),"%.1f FPS  |  %.2f ms work  |  %.3fx  |  scene %u tiles / %u walls / %u objects  |  uploads %u",fps,workMs,viewer.camera.zoom,viewer.stats.tiles,viewer.stats.walls,viewer.stats.objects,viewer.stats.uploads);
                 text(renderer,12,28,buf);
                 std::snprintf(buf,sizeof(buf),"Texture cache %.2f MiB / 32  |  decoded %.2f / 8  |  segments %.2f / 4",
                     viewer.stats.textureBytes/1048576.,viewer.stats.decodedBytes/1048576.,viewer.stats.segmentBytes/1048576.);
@@ -251,7 +252,8 @@ int main(int argc,char** argv) {
                     << ",\n  \"map_tiles\": " << viewer.tileCount() << ",\n  \"map_walls\": " << viewer.wallCount()
                     << ",\n  \"zoom\": " << viewer.camera.zoom << ",\n  \"view_width\": " << width/viewer.camera.zoom
                     << ",\n  \"view_height\": " << height/viewer.camera.zoom << ",\n  \"map_objects\": " << viewer.objectCount()
-                    << ",\n  \"visible_objects\": " << viewer.stats.objects
+                    << ",\n  \"scene_objects\": " << viewer.stats.objects
+                    << ",\n  \"scene_rebuilds\": " << viewer.stats.sceneRebuilds
                     << ",\n  \"texture_bytes\": " << viewer.stats.textureBytes << ",\n  \"decoded_bytes\": " << viewer.stats.decodedBytes
                     << ",\n  \"segment_bytes\": " << viewer.stats.segmentBytes << ",\n  \"desktop_work_mean_ms\": " << mean
                     << ",\n  \"desktop_work_p95_ms\": " << p95 << ",\n  \"hardware_verified\": false\n}\n";
